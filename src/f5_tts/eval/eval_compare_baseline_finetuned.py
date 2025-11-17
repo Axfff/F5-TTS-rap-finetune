@@ -271,5 +271,13 @@ python src/f5_tts/eval/eval_compare_baseline_finetuned.py \
     --vocab_file data/rap_1107_char/vocab.txt \
     --output_dir results/rap_evaluation \
     --ref_text_ratio 0.5
+
+python src/f5_tts/eval/eval_compare_baseline_finetuned.py \
+    --eval_data_dir data/clean_rap_1111_char/ \
+    --baseline_ckpt ckpts/clean_rap_1111/pretrained_model_1250000.safetensors \
+    --finetuned_ckpt ckpts/clean_rap_1111/model_last.pt \
+    --vocab_file data/clean_rap_1111_char/vocab.txt \
+    --output_dir results/rap_evaluation \
+    --ref_text_ratio 0.5
     
 """
