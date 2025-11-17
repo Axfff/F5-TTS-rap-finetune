@@ -14,7 +14,6 @@ from tqdm import tqdm
 
 from f5_tts.infer.utils_infer import load_checkpoint, load_vocoder
 from f5_tts.model import CFM
-from f5_tts.model.modules import MelSpec
 from f5_tts.model.utils import get_tokenizer, convert_char_to_pinyin
 
 
@@ -92,8 +91,8 @@ def load_eval_dataset(data_dir):
     return eval_samples
 
 
-def preprocess_audio(audio_path, mel_spectrogram, device):
-    """Load and preprocess reference audio, convert to mel spectrogram"""
+def preprocess_audio(audio_path, device):
+    """Load and preprocess reference audio"""
     audio, sr = torchaudio.load(audio_path)
 
     if audio.shape[0] > 1:
@@ -107,16 +106,15 @@ def preprocess_audio(audio_path, mel_spectrogram, device):
         resampler = torchaudio.transforms.Resample(sr, target_sample_rate)
         audio = resampler(audio)
 
-    ref_mel = mel_spectrogram(audio)
-    ref_mel = ref_mel.squeeze(0).to(device)
+    audio = audio.to(device)
 
-    return ref_mel, rms
+    return audio, rms
 
 
 def inference_single(
     model,
     vocoder,
-    ref_mel,
+    ref_audio,
     ref_text,
     gen_text,
     ref_rms,
@@ -134,29 +132,24 @@ def inference_single(
     text_list = [ref_text + gen_text]
     final_text_list = convert_char_to_pinyin(text_list)
 
-    ref_mel_len = ref_mel.shape[-1]
+    ref_audio_len = ref_audio.shape[-1] // hop_length
     ref_text_len = len(ref_text.encode("utf-8"))
     gen_text_len = len(gen_text.encode("utf-8"))
-    duration = ref_mel_len + int(ref_mel_len / ref_text_len * gen_text_len / speed)
-
-    ref_mel_batch = ref_mel.unsqueeze(0).permute(0, 2, 1)
-    duration_tensor = torch.tensor([duration], dtype=torch.long, device=device)
-    ref_mel_len_tensor = torch.tensor([ref_mel_len], dtype=torch.long, device=device)
+    duration = ref_audio_len + int(ref_audio_len / ref_text_len * gen_text_len / speed)
 
     with torch.inference_mode():
         generated, _ = model.sample(
-            cond=ref_mel_batch,
+            cond=ref_audio,
             text=final_text_list,
-            duration=duration_tensor,
-            lens=ref_mel_len_tensor,
+            duration=duration,
             steps=nfe_step,
             cfg_strength=cfg_strength,
             sway_sampling_coef=sway_sampling_coef,
         )
 
-        generated = generated[0].to(torch.float32)
-        generated = generated[ref_mel_len:duration, :]
-        generated_mel = generated.unsqueeze(0).permute(0, 2, 1)
+        generated = generated.to(torch.float32)
+        generated = generated[:, ref_audio_len:, :]
+        generated_mel = generated.permute(0, 2, 1)
 
         if mel_spec_type == "vocos":
             generated_wave = vocoder.decode(generated_mel)
@@ -253,15 +246,6 @@ def main():
     baseline_output_dir.mkdir(parents=True, exist_ok=True)
     finetuned_output_dir.mkdir(parents=True, exist_ok=True)
 
-    mel_spectrogram = MelSpec(
-        n_fft=n_fft,
-        hop_length=hop_length,
-        win_length=win_length,
-        n_mel_channels=n_mel_channels,
-        target_sample_rate=target_sample_rate,
-        mel_spec_type=args.mel_spec_type,
-    )
-
     baseline_model.eval()
     finetuned_model.eval()
 
@@ -280,7 +264,7 @@ def main():
         audio_path = sample["audio_path"]
         full_text = sample["text"]
 
-        ref_mel, ref_rms = preprocess_audio(audio_path, mel_spectrogram, device)
+        ref_audio, ref_rms = preprocess_audio(audio_path, device)
 
         split_idx = int(len(full_text) * args.ref_text_ratio)
         if split_idx == 0:
@@ -296,7 +280,7 @@ def main():
         baseline_wave = inference_single(
             model=baseline_model,
             vocoder=vocoder,
-            ref_mel=ref_mel,
+            ref_audio=ref_audio,
             ref_text=ref_text,
             gen_text=gen_text,
             ref_rms=ref_rms,
@@ -311,7 +295,7 @@ def main():
         finetuned_wave = inference_single(
             model=finetuned_model,
             vocoder=vocoder,
-            ref_mel=ref_mel,
+            ref_audio=ref_audio,
             ref_text=ref_text,
             gen_text=gen_text,
             ref_rms=ref_rms,
