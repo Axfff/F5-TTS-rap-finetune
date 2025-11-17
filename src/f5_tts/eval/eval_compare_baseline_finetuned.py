@@ -8,13 +8,13 @@ import time
 from pathlib import Path
 
 import pandas as pd
+import soundfile as sf
 import torch
-import torchaudio
 from tqdm import tqdm
 
-from f5_tts.infer.utils_infer import load_checkpoint, load_vocoder
+from f5_tts.infer.utils_infer import load_checkpoint, load_vocoder, infer_process
 from f5_tts.model import CFM
-from f5_tts.model.utils import get_tokenizer, convert_char_to_pinyin
+from f5_tts.model.utils import get_tokenizer
 
 
 target_rms = 0.1
@@ -89,79 +89,6 @@ def load_eval_dataset(data_dir):
             })
 
     return eval_samples
-
-
-def preprocess_audio(audio_path, device):
-    """Load and preprocess reference audio"""
-    audio, sr = torchaudio.load(audio_path)
-
-    if audio.shape[0] > 1:
-        audio = torch.mean(audio, dim=0, keepdim=True)
-
-    rms = torch.sqrt(torch.mean(torch.square(audio)))
-    if rms < target_rms:
-        audio = audio * target_rms / rms
-
-    if sr != target_sample_rate:
-        resampler = torchaudio.transforms.Resample(sr, target_sample_rate)
-        audio = resampler(audio)
-
-    audio = audio.to(device)
-
-    return audio, rms
-
-
-def inference_single(
-    model,
-    vocoder,
-    ref_audio,
-    ref_text,
-    gen_text,
-    ref_rms,
-    nfe_step=32,
-    cfg_strength=2.0,
-    sway_sampling_coef=-1.0,
-    speed=1.0,
-    mel_spec_type="vocos",
-    device="cuda",
-):
-    """Run inference for a single sample"""
-    if len(ref_text[-1].encode("utf-8")) == 1:
-        ref_text = ref_text + " "
-
-    text_list = [ref_text + gen_text]
-    final_text_list = convert_char_to_pinyin(text_list)
-
-    ref_audio_len = ref_audio.shape[-1] // hop_length
-    ref_text_len = len(ref_text.encode("utf-8"))
-    gen_text_len = len(gen_text.encode("utf-8"))
-    duration = ref_audio_len + int(ref_audio_len / ref_text_len * gen_text_len / speed)
-
-    with torch.inference_mode():
-        generated, _ = model.sample(
-            cond=ref_audio,
-            text=final_text_list,
-            duration=duration,
-            steps=nfe_step,
-            cfg_strength=cfg_strength,
-            sway_sampling_coef=sway_sampling_coef,
-        )
-
-        generated = generated.to(torch.float32)
-        generated = generated[:, ref_audio_len:, :]
-        generated_mel = generated.permute(0, 2, 1)
-
-        if mel_spec_type == "vocos":
-            generated_wave = vocoder.decode(generated_mel)
-        elif mel_spec_type == "bigvgan":
-            generated_wave = vocoder(generated_mel)
-
-        if ref_rms < target_rms:
-            generated_wave = generated_wave * ref_rms / target_rms
-
-        generated_wave = generated_wave.squeeze().cpu()
-
-    return generated_wave
 
 
 def main():
@@ -264,52 +191,60 @@ def main():
         audio_path = sample["audio_path"]
         full_text = sample["text"]
 
-        ref_audio, ref_rms = preprocess_audio(audio_path, device)
-
         # Simple approach: use full audio and text as reference, regenerate the same text
         ref_text = full_text
         gen_text = full_text
 
-        baseline_wave = inference_single(
-            model=baseline_model,
-            vocoder=vocoder,
-            ref_audio=ref_audio,
+        # Use the same inference process as CLI
+        baseline_wave, baseline_sr, _ = infer_process(
+            ref_audio=audio_path,
             ref_text=ref_text,
             gen_text=gen_text,
-            ref_rms=ref_rms,
+            model_obj=baseline_model,
+            vocoder=vocoder,
+            mel_spec_type=args.mel_spec_type,
+            show_info=print,
+            progress=None,
+            target_rms=target_rms,
+            cross_fade_duration=0.15,
             nfe_step=args.nfe_step,
             cfg_strength=args.cfg_strength,
             sway_sampling_coef=args.sway_sampling_coef,
             speed=args.speed,
-            mel_spec_type=args.mel_spec_type,
+            fix_duration=None,
             device=device,
         )
 
-        finetuned_wave = inference_single(
-            model=finetuned_model,
-            vocoder=vocoder,
-            ref_audio=ref_audio,
+        finetuned_wave, finetuned_sr, _ = infer_process(
+            ref_audio=audio_path,
             ref_text=ref_text,
             gen_text=gen_text,
-            ref_rms=ref_rms,
+            model_obj=finetuned_model,
+            vocoder=vocoder,
+            mel_spec_type=args.mel_spec_type,
+            show_info=print,
+            progress=None,
+            target_rms=target_rms,
+            cross_fade_duration=0.15,
             nfe_step=args.nfe_step,
             cfg_strength=args.cfg_strength,
             sway_sampling_coef=args.sway_sampling_coef,
             speed=args.speed,
-            mel_spec_type=args.mel_spec_type,
+            fix_duration=None,
             device=device,
         )
 
-        torchaudio.save(
+        # Save as numpy arrays
+        sf.write(
             baseline_output_dir / f"{audio_file}.wav",
-            baseline_wave.unsqueeze(0),
-            target_sample_rate
+            baseline_wave,
+            baseline_sr
         )
 
-        torchaudio.save(
+        sf.write(
             finetuned_output_dir / f"{audio_file}.wav",
-            finetuned_wave.unsqueeze(0),
-            target_sample_rate
+            finetuned_wave,
+            finetuned_sr
         )
 
     elapsed_time = time.time() - start_time
