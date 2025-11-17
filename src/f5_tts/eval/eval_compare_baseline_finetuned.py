@@ -14,6 +14,7 @@ from tqdm import tqdm
 
 from f5_tts.infer.utils_infer import load_checkpoint, load_vocoder
 from f5_tts.model import CFM
+from f5_tts.model.modules import MelSpec
 from f5_tts.model.utils import get_tokenizer, convert_char_to_pinyin
 
 
@@ -91,8 +92,8 @@ def load_eval_dataset(data_dir):
     return eval_samples
 
 
-def preprocess_audio(audio_path, device):
-    """Load and preprocess reference audio"""
+def preprocess_audio(audio_path, mel_spectrogram, device):
+    """Load and preprocess reference audio, convert to mel spectrogram"""
     audio, sr = torchaudio.load(audio_path)
 
     if audio.shape[0] > 1:
@@ -106,14 +107,16 @@ def preprocess_audio(audio_path, device):
         resampler = torchaudio.transforms.Resample(sr, target_sample_rate)
         audio = resampler(audio)
 
-    audio = audio.to(device)
-    return audio, rms
+    ref_mel = mel_spectrogram(audio)
+    ref_mel = ref_mel.squeeze(0).to(device)
+
+    return ref_mel, rms
 
 
 def inference_single(
     model,
     vocoder,
-    ref_audio,
+    ref_mel,
     ref_text,
     gen_text,
     ref_rms,
@@ -131,14 +134,14 @@ def inference_single(
     text_list = [ref_text + gen_text]
     final_text_list = convert_char_to_pinyin(text_list)
 
-    ref_audio_len = ref_audio.shape[-1] // hop_length
+    ref_mel_len = ref_mel.shape[-1]
     ref_text_len = len(ref_text.encode("utf-8"))
     gen_text_len = len(gen_text.encode("utf-8"))
-    duration = ref_audio_len + int(ref_audio_len / ref_text_len * gen_text_len / speed)
+    duration = ref_mel_len + int(ref_mel_len / ref_text_len * gen_text_len / speed)
 
     with torch.inference_mode():
         generated, _ = model.sample(
-            cond=ref_audio,
+            cond=ref_mel,
             text=final_text_list,
             duration=duration,
             steps=nfe_step,
@@ -147,7 +150,7 @@ def inference_single(
         )
 
         generated = generated.to(torch.float32)
-        generated = generated[:, ref_audio_len:, :]
+        generated = generated[:, ref_mel_len:, :]
         generated_mel = generated.permute(0, 2, 1)
 
         if mel_spec_type == "vocos":
@@ -245,6 +248,18 @@ def main():
     baseline_output_dir.mkdir(parents=True, exist_ok=True)
     finetuned_output_dir.mkdir(parents=True, exist_ok=True)
 
+    mel_spectrogram = MelSpec(
+        n_fft=n_fft,
+        hop_length=hop_length,
+        win_length=win_length,
+        n_mel_channels=n_mel_channels,
+        target_sample_rate=target_sample_rate,
+        mel_spec_type=args.mel_spec_type,
+    )
+
+    baseline_model.eval()
+    finetuned_model.eval()
+
     print("\n" + "="*80)
     print("Starting batch inference...")
     print("="*80)
@@ -260,7 +275,7 @@ def main():
         audio_path = sample["audio_path"]
         full_text = sample["text"]
 
-        ref_audio, ref_rms = preprocess_audio(audio_path, device)
+        ref_mel, ref_rms = preprocess_audio(audio_path, mel_spectrogram, device)
 
         split_idx = int(len(full_text) * args.ref_text_ratio)
         if split_idx == 0:
@@ -276,7 +291,7 @@ def main():
         baseline_wave = inference_single(
             model=baseline_model,
             vocoder=vocoder,
-            ref_audio=ref_audio,
+            ref_mel=ref_mel,
             ref_text=ref_text,
             gen_text=gen_text,
             ref_rms=ref_rms,
@@ -291,7 +306,7 @@ def main():
         finetuned_wave = inference_single(
             model=finetuned_model,
             vocoder=vocoder,
-            ref_audio=ref_audio,
+            ref_mel=ref_mel,
             ref_text=ref_text,
             gen_text=gen_text,
             ref_rms=ref_rms,
@@ -329,3 +344,15 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+"""example usage
+
+python src/f5_tts/eval/eval_compare_baseline_finetuned.py \
+    --eval_data_dir data/test_rap_char \
+    --baseline_ckpt ckpts/F5TTS_Base/model_1200000.pt \
+    --finetuned_ckpt path/to/your/finetuned.ckpt \
+    --vocab_file data/rap_1107_char/vocab.txt \
+    --output_dir results/rap_evaluation \
+    --ref_text_ratio 0.5
+    
+"""
