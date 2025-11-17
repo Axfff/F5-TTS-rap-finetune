@@ -48,16 +48,14 @@ def create_evaluation_ui(baseline_dir, finetuned_dir, output_csv):
             writer = csv.writer(f)
             writer.writerow(['timestamp', 'audio_id', 'choice', 'notes'])
 
-    current_index = gr.State(0)
-
     def get_audio_pair(index):
         """Get audio pair at given index"""
         if index >= len(audio_pairs):
-            return None, None, f"Evaluation complete! ({len(audio_pairs)}/{len(audio_pairs)})", ""
+            return None, None, f"Evaluation complete! ({len(audio_pairs)}/{len(audio_pairs)})", "", index
 
         pair = audio_pairs[index]
         progress = f"Sample {index + 1}/{len(audio_pairs)}: {pair['id']}"
-        return pair['baseline'], pair['finetuned'], progress, pair['id']
+        return pair['baseline'], pair['finetuned'], progress, pair['id'], index
 
     def save_choice(index, choice, notes):
         """Save user's choice to CSV"""
@@ -81,10 +79,11 @@ def create_evaluation_ui(baseline_dir, finetuned_dir, output_csv):
     def on_choice(index, choice, notes):
         """Handle choice button click"""
         new_index, message = save_choice(index, choice, notes)
-        baseline, finetuned, progress, audio_id = get_audio_pair(new_index)
+        baseline, finetuned, progress, audio_id, _ = get_audio_pair(new_index)
         return new_index, baseline, finetuned, progress, audio_id, "", message
 
     with gr.Blocks(title="Rap Model Evaluation") as app:
+        current_index = gr.State(0)
         gr.Markdown("""
         # Rap Model Human Evaluation
 
@@ -124,7 +123,7 @@ def create_evaluation_ui(baseline_dir, finetuned_dir, output_csv):
         app.load(
             get_audio_pair,
             inputs=[current_index],
-            outputs=[baseline_audio, finetuned_audio, progress_text, audio_id_text]
+            outputs=[baseline_audio, finetuned_audio, progress_text, audio_id_text, current_index]
         )
 
         baseline_btn.click(
