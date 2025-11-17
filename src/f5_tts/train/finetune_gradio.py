@@ -652,6 +652,7 @@ def transcribe_all(name_project, audio_files, language, user=False, progress=gr.
     num = 0
     error_num = 0
     data = ""
+    error_messages = []
     for file_audio in progress.tqdm(file_audios, desc="transcribe files", total=len((file_audios))):
         audio, _ = librosa.load(file_audio, sr=24000, mono=True)
 
@@ -673,14 +674,17 @@ def transcribe_all(name_project, audio_files, language, user=False, progress=gr.
                 data += f"{name_segment}|{text}\n"
 
                 num += 1
-            except:  # noqa: E722
+            except Exception as exc:  # capture failure details for user feedback
                 error_num += 1
+                error_messages.append(f"{name_segment}: {exc}")
 
     with open(file_metadata, "w", encoding="utf-8-sig") as f:
         f.write(data)
 
-    if error_num != []:
-        error_text = f"\nerror files : {error_num}"
+    if error_num:
+        details = "\n".join(error_messages[:5])  # show a few details to keep UI readable
+        suffix = "\n..." if len(error_messages) > 5 else ""
+        error_text = f"\nerror files : {error_num}\n{details}{suffix}"
     else:
         error_text = ""
 

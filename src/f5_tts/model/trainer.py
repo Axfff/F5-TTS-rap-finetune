@@ -243,7 +243,7 @@ class Trainer:
 
             self.accelerator.unwrap_model(self.model).load_state_dict(checkpoint["model_state_dict"])
             self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-            if self.scheduler:
+            if self.scheduler and "scheduler_state_dict" in checkpoint:
                 self.scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
             update = checkpoint["update"]
         else:
