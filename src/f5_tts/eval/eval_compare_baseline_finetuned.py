@@ -264,7 +264,7 @@ def main():
         audio_path = sample["audio_path"]
         full_text = sample["text"]
 
-        ref_audio, ref_rms = preprocess_audio(audio_path, device)
+        full_audio, full_rms = preprocess_audio(audio_path, device)
 
         split_idx = int(len(full_text) * args.ref_text_ratio)
         if split_idx == 0:
@@ -277,13 +277,17 @@ def main():
             print(f"Skipping {audio_file}: no generation text after split")
             continue
 
+        text_duration_ratio = len(ref_text.encode("utf-8")) / len(full_text.encode("utf-8"))
+        ref_audio_frames = int(full_audio.shape[-1] * text_duration_ratio)
+        ref_audio = full_audio[:, :ref_audio_frames]
+
         baseline_wave = inference_single(
             model=baseline_model,
             vocoder=vocoder,
             ref_audio=ref_audio,
             ref_text=ref_text,
             gen_text=gen_text,
-            ref_rms=ref_rms,
+            ref_rms=full_rms,
             nfe_step=args.nfe_step,
             cfg_strength=args.cfg_strength,
             sway_sampling_coef=args.sway_sampling_coef,
@@ -298,7 +302,7 @@ def main():
             ref_audio=ref_audio,
             ref_text=ref_text,
             gen_text=gen_text,
-            ref_rms=ref_rms,
+            ref_rms=full_rms,
             nfe_step=args.nfe_step,
             cfg_strength=args.cfg_strength,
             sway_sampling_coef=args.sway_sampling_coef,
