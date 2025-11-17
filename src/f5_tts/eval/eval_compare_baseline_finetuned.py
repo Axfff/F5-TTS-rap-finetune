@@ -4,70 +4,43 @@ import sys
 sys.path.append(os.getcwd())
 
 import argparse
+import subprocess
 import time
 from pathlib import Path
 
 import pandas as pd
-import soundfile as sf
-import torch
 from tqdm import tqdm
 
-from f5_tts.infer.utils_infer import load_checkpoint, load_vocoder, infer_process
-from f5_tts.model import CFM
-from f5_tts.model.utils import get_tokenizer
 
+def run_inference_cli(ckpt_path, vocab_file, ref_audio, ref_text, gen_text, output_path,
+                       mel_spec_type="vocos", nfe_step=32, cfg_strength=2.0,
+                       sway_sampling_coef=-1.0, speed=1.0):
+    """Run inference using the CLI command"""
+    cmd = [
+        "f5-tts_infer-cli",
+        "-p", ckpt_path,
+        "-r", ref_audio,
+        "-s", ref_text,
+        "-t", gen_text,
+        "-o", str(Path(output_path).parent),
+        "-w", Path(output_path).name,
+        "--vocoder_name", mel_spec_type,
+        "--nfe_step", str(nfe_step),
+        "--cfg_strength", str(cfg_strength),
+        "--sway_sampling_coef", str(sway_sampling_coef),
+        "--speed", str(speed),
+    ]
 
-target_rms = 0.1
-target_sample_rate = 24000
-n_mel_channels = 100
-hop_length = 256
-win_length = 1024
-n_fft = 1024
+    if vocab_file:
+        cmd.extend(["-v", vocab_file])
 
+    result = subprocess.run(cmd, capture_output=True, text=True)
 
-def load_model_from_config(
-    config_name,
-    ckpt_path,
-    vocab_file,
-    mel_spec_type="vocos",
-    ode_method="euler",
-    use_ema=True,
-    device="cuda",
-):
-    """Load model from config and checkpoint"""
-    from importlib.resources import files
-    from hydra.utils import get_class
-    from omegaconf import OmegaConf
+    if result.returncode != 0:
+        print(f"Error running CLI: {result.stderr}")
+        return False
 
-    model_cfg = OmegaConf.load(str(files("f5_tts").joinpath(f"configs/{config_name}.yaml")))
-    model_cls = get_class(f"f5_tts.model.{model_cfg.model.backbone}")
-    model_arc = model_cfg.model.arch
-
-    tokenizer = "custom" if vocab_file else model_cfg.model.tokenizer
-    dataset_name = vocab_file if vocab_file else model_cfg.datasets.name
-
-    vocab_char_map, vocab_size = get_tokenizer(dataset_name, tokenizer)
-
-    model = CFM(
-        transformer=model_cls(**model_arc, text_num_embeds=vocab_size, mel_dim=n_mel_channels),
-        mel_spec_kwargs=dict(
-            n_fft=n_fft,
-            hop_length=hop_length,
-            win_length=win_length,
-            n_mel_channels=n_mel_channels,
-            target_sample_rate=target_sample_rate,
-            mel_spec_type=mel_spec_type,
-        ),
-        odeint_kwargs=dict(
-            method=ode_method,
-        ),
-        vocab_char_map=vocab_char_map,
-    ).to(device)
-
-    dtype = torch.float32 if mel_spec_type == "bigvgan" else None
-    model = load_checkpoint(model, ckpt_path, device, dtype=dtype, use_ema=use_ema)
-
-    return model
+    return True
 
 
 def load_eval_dataset(data_dir):
@@ -106,18 +79,8 @@ def main():
     parser.add_argument("--cfg_strength", type=float, default=2.0, help="Classifier-free guidance strength")
     parser.add_argument("--sway_sampling_coef", type=float, default=-1.0, help="Sway sampling coefficient")
     parser.add_argument("--speed", type=float, default=1.0, help="Speech speed")
-    parser.add_argument("--ode_method", type=str, default="euler", help="ODE solver method")
-    parser.add_argument("--use_ema", action="store_true", default=True, help="Use EMA weights")
-
-    parser.add_argument("--ref_text_ratio", type=float, default=0.5, help="Ratio of text to use as reference (0-1)")
-    parser.add_argument("--device", type=str, default="cuda", help="Device to use")
-    parser.add_argument("--local_vocoder", action="store_true", help="Use local vocoder checkpoint")
-    parser.add_argument("--vocoder_path", type=str, default="", help="Local vocoder path")
 
     args = parser.parse_args()
-
-    device = args.device if torch.cuda.is_available() else "cpu"
-    print(f"Using device: {device}")
 
     print("\n" + "="*80)
     print("Loading evaluation dataset...")
@@ -125,63 +88,18 @@ def main():
     eval_samples = load_eval_dataset(args.eval_data_dir)
     print(f"Loaded {len(eval_samples)} evaluation samples")
 
-    print("\n" + "="*80)
-    print("Loading vocoder...")
-    print("="*80)
-    if args.mel_spec_type == "vocos":
-        vocoder_local_path = args.vocoder_path or "../checkpoints/charactr/vocos-mel-24khz"
-    elif args.mel_spec_type == "bigvgan":
-        vocoder_local_path = args.vocoder_path or "../checkpoints/bigvgan_v2_24khz_100band_256x"
-
-    vocoder = load_vocoder(
-        vocoder_name=args.mel_spec_type,
-        is_local=args.local_vocoder,
-        local_path=vocoder_local_path,
-        device=device
-    )
-
-    print("\n" + "="*80)
-    print("Loading baseline model...")
-    print("="*80)
-    print(f"Checkpoint: {args.baseline_ckpt}")
-    baseline_model = load_model_from_config(
-        config_name=args.config_name,
-        ckpt_path=args.baseline_ckpt,
-        vocab_file=args.vocab_file,
-        mel_spec_type=args.mel_spec_type,
-        ode_method=args.ode_method,
-        use_ema=args.use_ema,
-        device=device,
-    )
-
-    print("\n" + "="*80)
-    print("Loading finetuned model...")
-    print("="*80)
-    print(f"Checkpoint: {args.finetuned_ckpt}")
-    finetuned_model = load_model_from_config(
-        config_name=args.config_name,
-        ckpt_path=args.finetuned_ckpt,
-        vocab_file=args.vocab_file,
-        mel_spec_type=args.mel_spec_type,
-        ode_method=args.ode_method,
-        use_ema=args.use_ema,
-        device=device,
-    )
-
     baseline_output_dir = Path(args.output_dir) / "baseline"
     finetuned_output_dir = Path(args.output_dir) / "finetuned"
     baseline_output_dir.mkdir(parents=True, exist_ok=True)
     finetuned_output_dir.mkdir(parents=True, exist_ok=True)
 
-    baseline_model.eval()
-    finetuned_model.eval()
-
     print("\n" + "="*80)
-    print("Starting batch inference...")
+    print("Starting batch inference using CLI...")
     print("="*80)
+    print(f"Baseline checkpoint: {args.baseline_ckpt}")
+    print(f"Finetuned checkpoint: {args.finetuned_ckpt}")
     print(f"Baseline output: {baseline_output_dir}")
     print(f"Finetuned output: {finetuned_output_dir}")
-    print(f"Reference text ratio: {args.ref_text_ratio}")
     print()
 
     start_time = time.time()
@@ -195,57 +113,44 @@ def main():
         ref_text = full_text
         gen_text = full_text
 
-        # Use the same inference process as CLI
-        baseline_wave, baseline_sr, _ = infer_process(
+        # Run baseline inference via CLI
+        baseline_output = baseline_output_dir / f"{audio_file}.wav"
+        success = run_inference_cli(
+            ckpt_path=args.baseline_ckpt,
+            vocab_file=args.vocab_file,
             ref_audio=audio_path,
             ref_text=ref_text,
             gen_text=gen_text,
-            model_obj=baseline_model,
-            vocoder=vocoder,
+            output_path=baseline_output,
             mel_spec_type=args.mel_spec_type,
-            show_info=print,
-            progress=None,
-            target_rms=target_rms,
-            cross_fade_duration=0.15,
             nfe_step=args.nfe_step,
             cfg_strength=args.cfg_strength,
             sway_sampling_coef=args.sway_sampling_coef,
             speed=args.speed,
-            fix_duration=None,
-            device=device,
         )
 
-        finetuned_wave, finetuned_sr, _ = infer_process(
+        if not success:
+            print(f"Failed to generate baseline audio for {audio_file}")
+            continue
+
+        # Run finetuned inference via CLI
+        finetuned_output = finetuned_output_dir / f"{audio_file}.wav"
+        success = run_inference_cli(
+            ckpt_path=args.finetuned_ckpt,
+            vocab_file=args.vocab_file,
             ref_audio=audio_path,
             ref_text=ref_text,
             gen_text=gen_text,
-            model_obj=finetuned_model,
-            vocoder=vocoder,
+            output_path=finetuned_output,
             mel_spec_type=args.mel_spec_type,
-            show_info=print,
-            progress=None,
-            target_rms=target_rms,
-            cross_fade_duration=0.15,
             nfe_step=args.nfe_step,
             cfg_strength=args.cfg_strength,
             sway_sampling_coef=args.sway_sampling_coef,
             speed=args.speed,
-            fix_duration=None,
-            device=device,
         )
 
-        # Save as numpy arrays
-        sf.write(
-            baseline_output_dir / f"{audio_file}.wav",
-            baseline_wave,
-            baseline_sr
-        )
-
-        sf.write(
-            finetuned_output_dir / f"{audio_file}.wav",
-            finetuned_wave,
-            finetuned_sr
-        )
+        if not success:
+            print(f"Failed to generate finetuned audio for {audio_file}")
 
     elapsed_time = time.time() - start_time
 
