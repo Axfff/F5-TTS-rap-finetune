@@ -264,22 +264,11 @@ def main():
         audio_path = sample["audio_path"]
         full_text = sample["text"]
 
-        full_audio, full_rms = preprocess_audio(audio_path, device)
+        ref_audio, ref_rms = preprocess_audio(audio_path, device)
 
-        split_idx = int(len(full_text) * args.ref_text_ratio)
-        if split_idx == 0:
-            split_idx = min(10, len(full_text) // 2)
-
-        ref_text = full_text[:split_idx]
-        gen_text = full_text[split_idx:]
-
-        if not gen_text.strip():
-            print(f"Skipping {audio_file}: no generation text after split")
-            continue
-
-        text_duration_ratio = len(ref_text.encode("utf-8")) / len(full_text.encode("utf-8"))
-        ref_audio_frames = int(full_audio.shape[-1] * text_duration_ratio)
-        ref_audio = full_audio[:, :ref_audio_frames]
+        # Simple approach: use full audio and text as reference, regenerate the same text
+        ref_text = full_text
+        gen_text = full_text
 
         baseline_wave = inference_single(
             model=baseline_model,
@@ -287,7 +276,7 @@ def main():
             ref_audio=ref_audio,
             ref_text=ref_text,
             gen_text=gen_text,
-            ref_rms=full_rms,
+            ref_rms=ref_rms,
             nfe_step=args.nfe_step,
             cfg_strength=args.cfg_strength,
             sway_sampling_coef=args.sway_sampling_coef,
@@ -302,7 +291,7 @@ def main():
             ref_audio=ref_audio,
             ref_text=ref_text,
             gen_text=gen_text,
-            ref_rms=full_rms,
+            ref_rms=ref_rms,
             nfe_step=args.nfe_step,
             cfg_strength=args.cfg_strength,
             sway_sampling_coef=args.sway_sampling_coef,
