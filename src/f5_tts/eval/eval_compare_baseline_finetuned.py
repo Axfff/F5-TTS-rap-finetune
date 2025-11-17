@@ -139,19 +139,24 @@ def inference_single(
     gen_text_len = len(gen_text.encode("utf-8"))
     duration = ref_mel_len + int(ref_mel_len / ref_text_len * gen_text_len / speed)
 
+    ref_mel_batch = ref_mel.unsqueeze(0).permute(0, 2, 1)
+    duration_tensor = torch.tensor([duration], dtype=torch.long, device=device)
+    ref_mel_len_tensor = torch.tensor([ref_mel_len], dtype=torch.long, device=device)
+
     with torch.inference_mode():
         generated, _ = model.sample(
-            cond=ref_mel,
+            cond=ref_mel_batch,
             text=final_text_list,
-            duration=duration,
+            duration=duration_tensor,
+            lens=ref_mel_len_tensor,
             steps=nfe_step,
             cfg_strength=cfg_strength,
             sway_sampling_coef=sway_sampling_coef,
         )
 
-        generated = generated.to(torch.float32)
-        generated = generated[:, ref_mel_len:, :]
-        generated_mel = generated.permute(0, 2, 1)
+        generated = generated[0].to(torch.float32)
+        generated = generated[ref_mel_len:duration, :]
+        generated_mel = generated.unsqueeze(0).permute(0, 2, 1)
 
         if mel_spec_type == "vocos":
             generated_wave = vocoder.decode(generated_mel)
