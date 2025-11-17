@@ -1,5 +1,6 @@
 import argparse
 import csv
+import random
 from datetime import datetime
 from pathlib import Path
 
@@ -26,11 +27,24 @@ def load_audio_pairs(baseline_dir, finetuned_dir):
 
     audio_pairs = []
     for file_id in sorted(common_files):
-        audio_pairs.append({
-            "id": file_id,
-            "baseline": str(baseline_files[file_id]),
-            "finetuned": str(finetuned_files[file_id])
-        })
+        # Randomly assign which audio goes to position A or B
+        swap = random.choice([True, False])
+        if swap:
+            audio_pairs.append({
+                "id": file_id,
+                "audio_a": str(finetuned_files[file_id]),
+                "audio_b": str(baseline_files[file_id]),
+                "a_is": "finetuned",
+                "b_is": "baseline"
+            })
+        else:
+            audio_pairs.append({
+                "id": file_id,
+                "audio_a": str(baseline_files[file_id]),
+                "audio_b": str(finetuned_files[file_id]),
+                "a_is": "baseline",
+                "b_is": "finetuned"
+            })
 
     return audio_pairs
 
@@ -46,50 +60,65 @@ def create_evaluation_ui(baseline_dir, finetuned_dir, output_csv):
     if not output_path.exists():
         with open(output_path, 'w', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow(['timestamp', 'audio_id', 'choice', 'notes'])
+            writer.writerow(['timestamp', 'audio_id', 'choice', 'a_is', 'b_is', 'notes'])
 
     def get_audio_pair(index):
         """Get audio pair at given index"""
         if index >= len(audio_pairs):
-            return None, None, f"Evaluation complete! ({len(audio_pairs)}/{len(audio_pairs)})", "", index
+            return None, None, f"Evaluation complete! ({len(audio_pairs)}/{len(audio_pairs)})", "", "", index
 
         pair = audio_pairs[index]
         progress = f"Sample {index + 1}/{len(audio_pairs)}: {pair['id']}"
-        return pair['baseline'], pair['finetuned'], progress, pair['id'], index
+        return pair['audio_a'], pair['audio_b'], progress, pair['id'], "", index
 
     def save_choice(index, choice, notes):
         """Save user's choice to CSV"""
         if index >= len(audio_pairs):
-            return index, "Evaluation already complete!"
+            return index, "Evaluation already complete!", ""
 
         pair = audio_pairs[index]
         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
+        # Map user choice to actual model
+        if choice == "a":
+            actual_choice = pair['a_is']
+        elif choice == "b":
+            actual_choice = pair['b_is']
+        else:  # equal
+            actual_choice = "equal"
+
         with open(output_path, 'a', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow([timestamp, pair['id'], choice, notes])
+            writer.writerow([timestamp, pair['id'], choice, pair['a_is'], pair['b_is'], notes])
 
         new_index = index + 1
 
-        if new_index >= len(audio_pairs):
-            return new_index, f"Evaluation complete! All {len(audio_pairs)} samples rated."
+        # Reveal which was which
+        reveal_msg = f"You chose: {choice.upper() if choice != 'equal' else 'Equal'}\n"
+        reveal_msg += f"Audio A was: {pair['a_is'].upper()}\n"
+        reveal_msg += f"Audio B was: {pair['b_is'].upper()}\n"
+        reveal_msg += f"Actual choice: {actual_choice.upper()}"
 
-        return new_index, f"Saved! Moving to next sample..."
+        if new_index >= len(audio_pairs):
+            return new_index, f"{reveal_msg}\n\nEvaluation complete! All {len(audio_pairs)} samples rated.", reveal_msg
+
+        return new_index, f"{reveal_msg}\n\nSaved! Moving to next sample...", reveal_msg
 
     def on_choice(index, choice, notes):
         """Handle choice button click"""
-        new_index, message = save_choice(index, choice, notes)
-        baseline, finetuned, progress, audio_id, _ = get_audio_pair(new_index)
-        return new_index, baseline, finetuned, progress, audio_id, "", message
+        new_index, message, reveal = save_choice(index, choice, notes)
+        audio_a, audio_b, progress, audio_id, _, _ = get_audio_pair(new_index)
+        return new_index, audio_a, audio_b, progress, audio_id, "", message, reveal
 
     with gr.Blocks(title="Rap Model Evaluation") as app:
         current_index = gr.State(0)
         gr.Markdown("""
         # Rap Model Human Evaluation
 
-        Listen to both audio samples and choose which one sounds like a better rapper.
-        - **Baseline**: Pretrained model
-        - **Finetuned**: Model finetuned on rap data
+        Listen to both audio samples (Audio A and Audio B) and choose which one sounds like a better rapper.
+
+        **Note**: The baseline and finetuned models are randomly assigned to Audio A or Audio B.
+        After you make your choice, the system will reveal which was which.
 
         Click the button corresponding to the better performance, or "Equal" if they're the same.
         """)
@@ -100,12 +129,12 @@ def create_evaluation_ui(baseline_dir, finetuned_dir, output_csv):
 
         with gr.Row():
             with gr.Column():
-                gr.Markdown("### Baseline Model")
-                baseline_audio = gr.Audio(label="Baseline", type="filepath")
+                gr.Markdown("### Audio A")
+                audio_a = gr.Audio(label="Audio A", type="filepath")
 
             with gr.Column():
-                gr.Markdown("### Finetuned Model")
-                finetuned_audio = gr.Audio(label="Finetuned", type="filepath")
+                gr.Markdown("### Audio B")
+                audio_b = gr.Audio(label="Audio B", type="filepath")
 
         notes_input = gr.Textbox(
             label="Notes (optional)",
@@ -114,34 +143,35 @@ def create_evaluation_ui(baseline_dir, finetuned_dir, output_csv):
         )
 
         with gr.Row():
-            baseline_btn = gr.Button("Baseline is Better", variant="primary", size="lg")
+            a_btn = gr.Button("Audio A is Better", variant="primary", size="lg")
             equal_btn = gr.Button("Equal / No Preference", variant="secondary", size="lg")
-            finetuned_btn = gr.Button("Finetuned is Better", variant="primary", size="lg")
+            b_btn = gr.Button("Audio B is Better", variant="primary", size="lg")
 
         status_text = gr.Textbox(label="Status", interactive=False)
+        reveal_text = gr.Textbox(label="Reveal", interactive=False, value="")
 
         app.load(
             get_audio_pair,
             inputs=[current_index],
-            outputs=[baseline_audio, finetuned_audio, progress_text, audio_id_text, current_index]
+            outputs=[audio_a, audio_b, progress_text, audio_id_text, reveal_text, current_index]
         )
 
-        baseline_btn.click(
-            lambda idx, notes: on_choice(idx, "baseline", notes),
+        a_btn.click(
+            lambda idx, notes: on_choice(idx, "a", notes),
             inputs=[current_index, notes_input],
-            outputs=[current_index, baseline_audio, finetuned_audio, progress_text, audio_id_text, notes_input, status_text]
+            outputs=[current_index, audio_a, audio_b, progress_text, audio_id_text, notes_input, status_text, reveal_text]
         )
 
-        finetuned_btn.click(
-            lambda idx, notes: on_choice(idx, "finetuned", notes),
+        b_btn.click(
+            lambda idx, notes: on_choice(idx, "b", notes),
             inputs=[current_index, notes_input],
-            outputs=[current_index, baseline_audio, finetuned_audio, progress_text, audio_id_text, notes_input, status_text]
+            outputs=[current_index, audio_a, audio_b, progress_text, audio_id_text, notes_input, status_text, reveal_text]
         )
 
         equal_btn.click(
             lambda idx, notes: on_choice(idx, "equal", notes),
             inputs=[current_index, notes_input],
-            outputs=[current_index, baseline_audio, finetuned_audio, progress_text, audio_id_text, notes_input, status_text]
+            outputs=[current_index, audio_a, audio_b, progress_text, audio_id_text, notes_input, status_text, reveal_text]
         )
 
     return app
