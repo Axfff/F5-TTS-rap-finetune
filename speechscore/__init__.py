@@ -96,8 +96,8 @@ class Metric:
         return result
 
 
-import absolute
-import relative
+# import absolute
+# import relative
 
 
 class MetricsList:
