@@ -9,7 +9,7 @@ import soundfile as sf
 SAMPLING_RATE = 16000
 INPUT_LENGTH = 9.01
 
-from basis import ScoreBasis
+from ..basis import ScoreBasis
 
 
 class DNSMOS(ScoreBasis):

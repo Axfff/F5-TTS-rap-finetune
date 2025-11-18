@@ -1,4 +1,4 @@
-from basis import ScoreBasis
+from ..basis import ScoreBasis
 import librosa
 import math
 import numpy as np
