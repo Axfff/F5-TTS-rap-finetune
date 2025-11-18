@@ -15,7 +15,7 @@ from ...basis import ScoreBasis
 class DNSMOS(ScoreBasis):
     def __init__(self):
         super(DNSMOS, self).__init__(name='DNSMOS')
-        self.intrusive = True
+        self.intrusive = False
         self.score_rate = 16000
         self.p808_model_path = os.path.join('speechscore/scores/dnsmos/DNSMOS', 'model_v8.onnx')    
         self.primary_model_path = os.path.join('speechscore/scores/dnsmos/DNSMOS', 'sig_bak_ovr.onnx')

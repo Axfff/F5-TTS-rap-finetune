@@ -4,7 +4,7 @@ from ...basis import ScoreBasis
 class SRMR(ScoreBasis):
     def __init__(self):
         super(SRMR, self).__init__(name='SRMR')
-        self.intrusive = True
+        self.intrusive = False
         self.score_rate = 16000
 
     def windowed_scoring(self, audios, score_rate):
