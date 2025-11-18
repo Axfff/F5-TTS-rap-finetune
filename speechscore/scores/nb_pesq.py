@@ -1,4 +1,4 @@
-from ..basis import ScoreBasis
+from basis import ScoreBasis
 
 
 class NB_PESQ(ScoreBasis):

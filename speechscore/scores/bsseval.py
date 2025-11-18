@@ -1,5 +1,5 @@
 import numpy as np
-from ..basis import ScoreBasis
+from basis import ScoreBasis
 
 
 class BSSEval(ScoreBasis):

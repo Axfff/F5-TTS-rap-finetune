@@ -7,13 +7,13 @@
 from __future__ import division
 import numpy as np
 from scipy.signal.windows import hamming
-from .hilbert import hilbert
-from .modulation_filters import compute_modulation_cfs, modulation_filterbank,\
+from scores.srmr.hilbert import hilbert
+from scores.srmr.modulation_filters import compute_modulation_cfs, modulation_filterbank,\
                                 modfilt
 from gammatone.fftweight import fft_gtgram
 from gammatone.filters import centre_freqs, make_erb_filters, erb_filterbank
 #from srmrpy.segmentaxis import segment_axis
-from .segmentaxis import segment_axis
+from scores.srmr.segmentaxis import segment_axis
 
 from scipy.io.wavfile import read as readwav
 

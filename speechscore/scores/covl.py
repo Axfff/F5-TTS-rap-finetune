@@ -1,7 +1,7 @@
-from ..basis import ScoreBasis
+from basis import ScoreBasis
 import numpy as np
 from pesq import pesq
-from .helper import wss, llr, SSNR, norm_mos
+from scores.helper import wss, llr, SSNR, norm_mos
 
 class COVL(ScoreBasis):
     def __init__(self):

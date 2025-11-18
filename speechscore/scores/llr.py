@@ -1,7 +1,7 @@
-from ..basis import ScoreBasis
+from basis import ScoreBasis
 import numpy as np
 from scipy.linalg import toeplitz
-from .helper import lpcoeff
+from scores.helper import lpcoeff
 
 class LLR(ScoreBasis):
     def __init__(self):

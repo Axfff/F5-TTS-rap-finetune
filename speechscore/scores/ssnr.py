@@ -1,4 +1,4 @@
-from ..basis import ScoreBasis
+from basis import ScoreBasis
 import numpy as np
 
 class SSNR(ScoreBasis):
