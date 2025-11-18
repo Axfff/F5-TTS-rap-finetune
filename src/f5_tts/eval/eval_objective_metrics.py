@@ -91,7 +91,9 @@ def evaluate_audio_pair(pair, metrics_config, scorer):
                 results[f"finetuned_{metric_name}"] = finetuned_score.get(metric_name)
 
         except Exception as e:
+            import traceback
             print(f"  Error calculating {metric_name}: {str(e)}")
+            print(f"  Traceback: {traceback.format_exc()}")
             results[f"baseline_{metric_name}"] = None
             results[f"finetuned_{metric_name}"] = None
 
