@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 sys.path.append(str(Path(__file__).parent.parent.parent.parent))
 
-from speechscore import SpeechScore
+from speechscore.speechscore import SpeechScore
 
 
 def load_audio_pairs(baseline_dir, finetuned_dir, ground_truth_dir=None):
